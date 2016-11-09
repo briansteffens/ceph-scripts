@@ -5,4 +5,4 @@ echo deb https://download.ceph.com/debian-jewel/ $(lsb_release -sc) main | \
     tee /etc/apt/sources.list.d/ceph.list
 apt-get install -y apt-transport-https
 apt-get update
-apt-get install ceph-deploy
+apt-get install ceph-deploy -y
