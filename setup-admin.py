@@ -2,4 +2,4 @@
 
 import os
 
-os.makedir(os.path.join('/', os.environ['A']))
+os.mkdir(os.path.join('/', os.environ['A']))
