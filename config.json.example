@@ -1,0 +1,5 @@
+{
+    "api_key": "<Linode API key>",
+    "ssh_key": "<Public SSH key to be installed on provisioned Linodes>",
+    "root_pass": "<Root password for provisioned Linodes>"
+}
