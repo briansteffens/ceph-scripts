@@ -1,4 +1,3 @@
 #!/usr/bin/env bash
 
-sudo mkdir /herehere
-sudo touch /herehere/${A}
+ssh-keygen -f ~/.ssh/id_rsa -N ''
