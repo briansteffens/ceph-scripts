@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-mkdir /herehere
+sudo mkdir /herehere
+sudo touch /herehere/${A}
