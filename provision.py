@@ -1,7 +1,28 @@
+import os
 import sys
 import requests
 import urllib
 import json
+import subprocess
+
+
+def shell(cmd):
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE)
+
+    if len(res.stderr):
+        print('ERROR: ' + res.stderr.decode('utf-8'))
+        sys.exit(6)
+
+    return res.stdout.decode('utf-8')
+
+
+if not os.path.exists('id_rsa'):
+    shell('ssh-keygen -f ./id_rsa -N \'\'')
+
+
+ID_RSA = open('id_rsa').read()
+ID_RSA_PUB = open('id_rsa.pub').read()
 
 
 try:
@@ -43,6 +64,38 @@ def linodes():
 
 def ceph_linodes():
     return [l for l in linodes() if l['LPM_DISPLAYGROUP'] == 'ceph']
+
+
+def ceph_linode(label):
+    for linode in ceph_linodes():
+        if linode['LABEL'] == label:
+            return linode
+
+    print('No node with label ' + label + ' found.')
+    sys.exit(4)
+
+
+def linode_ips(linode_id):
+    linode_id = linode_id['LINODEID'] if 'LINODEID' in linode_id else linode_id
+    return api_request('linode.ip.list' +
+            '&LinodeID=' + str(linode_id))
+
+
+def _linode_ip(linode_id, predicate):
+    for ip in linode_ips(linode_id):
+        if predicate(ip):
+            return ip['IPADDRESS']
+
+    print('No matching IP found.')
+    sys.exit(5)
+
+
+def linode_public_ip(linode_id):
+    return _linode_ip(linode_id, lambda ip: ip['ISPUBLIC'] == 1)
+
+
+def linode_private_ip(linode_id):
+    return _linode_ip(linode_id, lambda ip: ip['ISPUBLIC'] == 0)
 
 
 def purge_ceph_linodes():
@@ -109,7 +162,8 @@ def create_config(linode_id, root_disk_id, data_disk_id):
             '&LinodeID=' + str(linode_id) +
             '&KernelID=' + str(KERNEL_ID) +
             '&Label=default' +
-            '&DiskList=' + str(root_disk_id) + ',' + str(data_disk_id))
+            '&DiskList=' + str(root_disk_id) + ',' + str(data_disk_id) +
+            '&helper_network=1')
 
     return r['ConfigID']
 
@@ -128,15 +182,88 @@ def print_all(avail_name):
         print(x + '\n')
 
 
+def add_private_ip(linode_id):
+    res = api_request('linode.ip.addprivate&' +
+            'LinodeID=' + str(linode_id))['IPADDRESS']
+
+    print('Linode ID ' + str(linode_id) + ' now has private IP ' + res)
+
+    return res
+
+
+def provision(name, node_type):
+    linode_id = create_linode(name)
+    add_private_ip(linode_id)
+    root_disk_id = deploy_stackscript(linode_id, {'type': node_type})
+    data_disk_id = create_data_disk(linode_id)
+    create_config(linode_id, root_disk_id, data_disk_id)
+    boot_linode(linode_id)
+
+
+def register_admin():
+    admin = ceph_linode('admin')
+    admin_ip = linode_public_ip(admin)
+
+    with open('register-admin.sh') as f:
+        script = f.read(). \
+                replace('{{ ID_RSA }}', ID_RSA). \
+                replace('{{ ID_RSA_PUB }}', ID_RSA_PUB)
+
+        with open('temp', 'w') as f:
+            f.write(script)
+
+        print(shell('ssh -o StrictHostKeyChecking=no root@' + admin_ip +
+                    ' \'bash\' < temp'))
+
+
+def authorize_admin_to_node(node_id):
+    node_ip = linode_public_ip(node_id)
+
+    with open('authorize-node.sh') as f:
+        script = f.read(). \
+                replace('{{ AUTHORIZED_KEY }}', ID_RSA_PUB)
+
+        with open('temp', 'w') as f:
+            f.write(script)
+
+        print(shell('ssh -o StrictHostKeyChecking=no root@' + node_ip +
+                    ' \'bash\' < temp'))
+
+
+def register_node(node_name, node_ip):
+    admin = ceph_linode('admin')
+    admin_ip = linode_public_ip(admin)
+
+    with open('register-node.sh') as f:
+        register_node_sh = f.read(). \
+                replace('{{ NODE_NAME }}', node_name). \
+                replace('{{ NODE_IP }}', node_ip)
+
+        with open('temp', 'w') as f:
+            f.write(register_node_sh)
+
+        print(shell('ssh -o StrictHostKeyChecking=no root@' + admin_ip +
+                    ' \'bash\' < temp'))
+
+
+osd0 = ceph_linode('osd0')
+authorize_admin_to_node(osd0)
+osd0_ip = linode_private_ip(osd0)
+register_node('osd0', osd0_ip)
+
+
+#register_node('osd-0', 
+
+
 #print_all('linodeplans')
 #print_all('distributions')
 #print_all('kernels')
 
-purge_ceph_linodes()
 
-linode_id = create_linode('osd-0')
-root_disk_id = deploy_stackscript(linode_id, {'a': 'testing'})
-data_disk_id = create_data_disk(linode_id)
-create_config(linode_id, root_disk_id, data_disk_id)
-boot_linode(linode_id)
+#purge_ceph_linodes()
+
+#provision('admin', 'admin')
+#provision('osd0', 'osd')
+
+#register_admin()
 
