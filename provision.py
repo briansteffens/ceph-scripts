@@ -4,6 +4,8 @@ import requests
 import urllib
 import json
 import subprocess
+from datetime import datetime
+import time
 
 
 def shell(cmd):
@@ -75,10 +77,18 @@ def ceph_linode(label):
     sys.exit(4)
 
 
+def get_id(linode_or_id):
+    try:
+        return linode_or_id['LINODEID']
+    except:
+        pass
+
+    return linode_or_id
+
+
 def linode_ips(linode_id):
-    linode_id = linode_id['LINODEID'] if 'LINODEID' in linode_id else linode_id
     return api_request('linode.ip.list' +
-            '&LinodeID=' + str(linode_id))
+            '&LinodeID=' + str(get_id(linode_id)))
 
 
 def _linode_ip(linode_id, predicate):
@@ -198,6 +208,7 @@ def provision(name, node_type):
     data_disk_id = create_data_disk(linode_id)
     create_config(linode_id, root_disk_id, data_disk_id)
     boot_linode(linode_id)
+    return linode_id
 
 
 def register_admin():
@@ -216,6 +227,14 @@ def register_admin():
                     ' \'bash\' < temp'))
 
 
+def remote_shell(node_ip, cmd):
+    return shell('ssh -o StrictHostKeyChecking=no root@' + node_ip + ' ' + cmd)
+
+
+def remote_script(node_ip, script):
+    return remote_shell(node_ip, '\'bash\' < ' + script)
+
+
 def authorize_admin_to_node(node_id):
     node_ip = linode_public_ip(node_id)
 
@@ -226,30 +245,45 @@ def authorize_admin_to_node(node_id):
         with open('temp', 'w') as f:
             f.write(script)
 
-        print(shell('ssh -o StrictHostKeyChecking=no root@' + node_ip +
-                    ' \'bash\' < temp'))
+        print(remote_script(node_ip, 'temp'))
 
 
-def register_node(node_name, node_ip):
+def register_node(node_id, node_name):
     admin = ceph_linode('admin')
     admin_ip = linode_public_ip(admin)
+
+    node_private_ip = linode_private_ip(node_id)
 
     with open('register-node.sh') as f:
         register_node_sh = f.read(). \
                 replace('{{ NODE_NAME }}', node_name). \
-                replace('{{ NODE_IP }}', node_ip)
+                replace('{{ NODE_IP }}', node_private_ip)
 
         with open('temp', 'w') as f:
             f.write(register_node_sh)
 
-        print(shell('ssh -o StrictHostKeyChecking=no root@' + admin_ip +
-                    ' \'bash\' < temp'))
+        print(remote_script(node_ip, 'temp'))
 
 
-osd0 = ceph_linode('osd0')
-authorize_admin_to_node(osd0)
-osd0_ip = linode_private_ip(osd0)
-register_node('osd0', osd0_ip)
+def wait_for_provision(node_id, timeout=120, throttle=3):
+    node_id = get_id(node_id)
+    node_ip = linode_public_ip(node_id)
+
+    print('Waiting for ' + str(node_id) + ' to come up..')
+
+    started = datetime.now()
+    while (datetime.now() - started).total_seconds() < timeout:
+        try:
+            if remote_script(node_ip, 'is_provisioned.sh').strip() == 'YES':
+                print(str(node_id) + ' is up.')
+                return
+        except:
+            pass
+
+        time.sleep(throttle)
+
+    print('Node ' + str(node_id) + ' never came up.')
+    sys.exit(5)
 
 
 #register_node('osd-0', 
@@ -262,8 +296,25 @@ register_node('osd0', osd0_ip)
 
 #purge_ceph_linodes()
 
-#provision('admin', 'admin')
-#provision('osd0', 'osd')
+#admin_id = provision('admin', 'admin')
+#osd0_id = provision('osd0', 'osd')
+
+admin_id = ceph_linode('admin')
+
+wait_for_provision(admin_id)
+print('** A')
+#wait_for_provision(osd0_id)
+print('** B')
 
 #register_admin()
+print('** C')
 
+#authorize_admin_to_node(osd0_id)
+print('** D')
+#register_node(osd0_id, 'osd0')
+
+print('** E')
+#osd0 = ceph_linode('osd0')
+#authorize_admin_to_node(osd0)
+#osd0_ip = linode_private_ip(osd0)
+#register_node('osd0', osd0_ip)
